@@ -23,9 +23,10 @@ class FileInfo:
         return self.name == value.name and self.size == value.size and self.crc == value.crc
 
 class ArchiveInfo:
-    def __init__(self, name, children):
+    def __init__(self, name, children, force_bad=False):
         self.name = name
         self.children = children
+        self.force_bad = force_bad
     
     def __eq__(self, value):
         if len(self.children) != len(value.children):
@@ -36,6 +37,30 @@ class ArchiveInfo:
                 return False
         
         return True
+    
+dat_files = {}
+
+for game in tqdm.tqdm(games):
+    roms = game.findall('rom')
+
+    children = {}
+    force_bad = False
+
+    for rom in roms:
+        try:
+            name = rom.get('name')
+            size = int(rom.get('size'))
+            crc = int(rom.get('crc'), 16)
+
+            children[crc] = FileInfo(name, size, crc)
+        except:
+            print(f"Error processing {rom.get('name')} in {game.get('name')}")
+            print(rom)
+
+            force_bad = True
+
+    name = game.get('name')
+    dat_files[name] = ArchiveInfo(name, children, force_bad)
 
 existing_files = {}
 
@@ -57,23 +82,6 @@ for file_name in tqdm.tqdm(os.listdir(base_dir)):
     #if index > 30:
     #    break
 
-dat_files = {}
-
-for game in tqdm.tqdm(games):
-    roms = game.findall('rom')
-
-    children = {}
-
-    for rom in roms:
-        name = rom.get('name')
-        size = int(rom.get('size'))
-        crc = int(rom.get('crc'), 16)
-
-        children[crc] = FileInfo(name, size, crc)
-
-    name = game.get('name')
-    dat_files[name] = ArchiveInfo(name, children)
-
 present = []
 missing = []
 bad = []
@@ -81,6 +89,11 @@ deleted = []
 renamed = {}
 
 for name, info in dat_files.items():
+    if info.force_bad:
+        print('F', info.name)
+        bad.append(info)
+        continue
+
     existing_info = existing_files.get(name, None)
 
     if not existing_info:

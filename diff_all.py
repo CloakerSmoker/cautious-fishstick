@@ -20,6 +20,7 @@ for dat in glob.glob('**/*.dat', root_dir=dats_dir, recursive=True):
 
     if os.path.exists(dat_shadow + '/present.txt'):
         print(f'{dat_shadow} already exists, skipping')
+        continue
 
     if not os.path.exists(os.path.join(data_dir, dat_directory)):
         print(f'Directory {dat_directory} not found, skipping')
