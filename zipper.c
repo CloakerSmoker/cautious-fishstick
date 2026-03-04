@@ -4,141 +4,206 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <zlib.h>
+#include <string.h>
 
 #include <openssl/sha.h>
 #include <openssl/md5.h>
 #include <openssl/evp.h>
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <zip_file>\n", argv[0]);
-        return EXIT_FAILURE;
+
+    unsigned char* buffer = mmap(NULL, 0x7FFFFFFF, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+
+    if (buffer == MAP_FAILED) {
+        perror("Failed to allocate buffer");
+        printf("{\"error\": \"Failed to allocate buffer\"}\n");
+        goto done_with_buffer;
     }
-
-    FILE* zip_file = fopen(argv[1], "rb");
-
-    if (!zip_file) {
-        perror("Failed to open zip file");
-        return EXIT_FAILURE;
-    }
-
-    fseek(zip_file, 0, SEEK_END);
-    uint64_t zip_size = ftell(zip_file);
-    fseek(zip_file, 0, SEEK_SET);
     
-    if (!zip_file) {
-        perror("Failed to open zip file");
-        return EXIT_FAILURE;
-    }
+    while (1) {
+        if (feof(stdin)) {
+            break;
+        }
 
-    int zip_fd = fileno(zip_file);
+        char zip_path[512] = {0};
+        fgets(zip_path, sizeof(zip_path), stdin);
+        int length = strlen(zip_path);
 
-    void* zip_data = mmap(NULL, zip_size, PROT_READ, MAP_PRIVATE, zip_fd, 0);
+        while (length > 0 && (zip_path[length - 1] == '\n' || zip_path[length - 1] == '\r')) {
+            zip_path[--length] = '\0';
+        }
 
-    if (zip_data == MAP_FAILED) {
-        perror("Failed to map zip file");
-        fclose(zip_file);
-        return EXIT_FAILURE;
-    }
+        if (zip_path[0] == 0) {
+            break;
+        }
 
-    struct zip_source* source = zip_source_buffer_create(zip_data, zip_size, 0, NULL);
-    struct zip* zip = zip_open_from_source(source, ZIP_RDONLY, NULL);
+        FILE* zip_file = fopen(zip_path, "rb");
 
-    if (!zip) {
-        perror("Failed to open zip from source");
-        zip_source_free(source);
-        munmap(zip_data, zip_size);
-        fclose(zip_file);
-        return EXIT_FAILURE;
-    }
+        printf("{\"path\": \"%s\", ", zip_path);
 
-    zip_int64_t num_entries = zip_get_num_entries(zip, 0);
-    printf("Number of entries in zip: %lld\n", num_entries);
+        if (!zip_file) {
+            perror("Failed to open zip file");
+            printf("\"error\": \"Failed to open zip file\"}\n");
+            goto done;
+        }
 
-    for (zip_int64_t i = 0; i < num_entries; i++) {
-        zip_stat_t stat = {0};
+        fseek(zip_file, 0, SEEK_END);
+        uint64_t zip_size = ftell(zip_file);
+        fseek(zip_file, 0, SEEK_SET);
 
-        if (zip_stat_index(zip, i, 0, &stat) == 0) {
-            printf("Entry %lld: %s (size: %lld)\n", i, stat.name, stat.size);
+        printf("\"size\": %lld, ", zip_size);
 
-            unsigned char md5_digest[MD5_DIGEST_LENGTH];
-            unsigned char sha1_digest[SHA_DIGEST_LENGTH];
+        int zip_fd = fileno(zip_file);
 
-            struct zip_file* file = zip_fopen_index(zip, i, 0);
+        void* zip_data = mmap(NULL, zip_size, PROT_READ, MAP_PRIVATE, zip_fd, 0);
 
-            if (file) {
-                unsigned char* buffer = mmap(NULL, 0x7FFFFFFF, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        if (zip_data == MAP_FAILED) {
+            perror("Failed to map zip file");
+            printf("\"error\": \"Failed to map zip file\"}\n");
+            goto done_with_file;
+        }
 
-                zip_uint64_t bytes_processed = 0;
-                unsigned int crc = 0;
+        unsigned char sha256_digest[SHA256_DIGEST_LENGTH];
+        EVP_MD_CTX* sha256_ctx = EVP_MD_CTX_new();
+        const EVP_MD* sha256_type = EVP_sha256();
+        EVP_DigestInit_ex(sha256_ctx, sha256_type, NULL);
+        EVP_DigestUpdate(sha256_ctx, zip_data, zip_size);
+        EVP_DigestFinal_ex(sha256_ctx, sha256_digest, NULL);
+        EVP_MD_CTX_free(sha256_ctx);
 
-                EVP_MD_CTX* md5_ctx = EVP_MD_CTX_new();
-                const EVP_MD* md5_type = EVP_md5();
-                EVP_DigestInit_ex(md5_ctx, md5_type, NULL);
+        struct zip_source* source = zip_source_buffer_create(zip_data, zip_size, 0, NULL);
+        struct zip* zip = zip_open_from_source(source, ZIP_RDONLY, NULL);
 
-                EVP_MD_CTX* sha1_ctx = EVP_MD_CTX_new();
-                const EVP_MD* sha1_type = EVP_sha1();
-                EVP_DigestInit_ex(sha1_ctx, sha1_type, NULL);
+        if (!zip) {
+            perror("Failed to open zip in memory");
+            printf("\"error\": \"Failed to open zip in memory\"}\n");
+            goto done_with_zip;
+        }
 
-                while (bytes_processed < stat.size) {
-                    zip_int64_t chunk_size = 0x7FFFFFFF;
+        printf("\"sha256\": \"");
+        for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+            printf("%02x", sha256_digest[i]);
+        }
 
-                    if (stat.size - bytes_processed < chunk_size) {
-                        chunk_size = stat.size - bytes_processed;
-                    }
+        zip_int64_t num_entries = zip_get_num_entries(zip, 0);
+        fprintf(stderr, "Number of entries in zip: %lld\n", num_entries);
 
-                    zip_int64_t bytes_read = zip_fread(file, buffer, chunk_size);
+        printf("\", \"entries\": [");
 
-                    if (bytes_read != chunk_size) {
-                        fprintf(stderr, "Failed to read entry %s: expected %lld bytes, got %lld bytes\n", stat.name, chunk_size, bytes_read);
-                        break;
-                    }
+        for (zip_int64_t i = 0; i < num_entries; i++) {
+            zip_stat_t stat = {0};
 
-                    crc = crc32(crc, (const unsigned char*)buffer, (uInt)bytes_read);
-                    EVP_DigestUpdate(md5_ctx, buffer, bytes_read);
-                    EVP_DigestUpdate(sha1_ctx, buffer, bytes_read);
+            printf("{\"index\": %lld, ", i);
 
-                    bytes_processed += bytes_read;
-                }
+            if (zip_stat_index(zip, i, 0, &stat) == 0) {
+                fprintf(stderr, "Entry %lld: %s (size: %lld)\n", i, stat.name, stat.size);
 
-                if (crc != (unsigned long)stat.crc) {
-                    fprintf(stderr, "CRC mismatch for entry %s: expected %08lx, got %08lx\n", stat.name, (unsigned long)stat.crc, crc);
-                }
+                printf("\"name\": \"%s\", \"size\": %lld, ", stat.name, stat.size);
 
                 unsigned char md5_digest[MD5_DIGEST_LENGTH];
                 unsigned char sha1_digest[SHA_DIGEST_LENGTH];
 
-                EVP_DigestFinal_ex(md5_ctx, md5_digest, NULL);
-                EVP_DigestFinal_ex(sha1_ctx, sha1_digest, NULL);
+                struct zip_file* file = zip_fopen_index(zip, i, 0);
 
-                EVP_MD_CTX_free(md5_ctx);
-                EVP_MD_CTX_free(sha1_ctx);
+                if (file) {
+                    zip_uint64_t bytes_processed = 0;
+                    unsigned int crc = 0;
 
-                printf("MD5: ");
-                for (int j = 0; j < MD5_DIGEST_LENGTH; j++) {
-                    printf("%02x", md5_digest[j]);
+                    EVP_MD_CTX* md5_ctx = EVP_MD_CTX_new();
+                    const EVP_MD* md5_type = EVP_md5();
+                    EVP_DigestInit_ex(md5_ctx, md5_type, NULL);
+
+                    EVP_MD_CTX* sha1_ctx = EVP_MD_CTX_new();
+                    const EVP_MD* sha1_type = EVP_sha1();
+                    EVP_DigestInit_ex(sha1_ctx, sha1_type, NULL);
+
+                    while (bytes_processed < stat.size) {
+                        zip_int64_t chunk_size = 0x7FFFFFFF;
+
+                        if (stat.size - bytes_processed < chunk_size) {
+                            chunk_size = stat.size - bytes_processed;
+                        }
+
+                        zip_int64_t bytes_read = zip_fread(file, buffer, chunk_size);
+
+                        if (bytes_read != chunk_size) {
+                            fprintf(stderr, "Failed to read entry %s: expected %lld bytes, got %lld bytes\n", stat.name, chunk_size, bytes_read);
+                            printf("\"error\": \"Failed to read entry\"}]");
+
+                            break;
+                        }
+
+                        crc = crc32(crc, (const unsigned char*)buffer, (uInt)bytes_read);
+                        //EVP_DigestUpdate(md5_ctx, buffer, bytes_read);
+                        EVP_DigestUpdate(sha1_ctx, buffer, bytes_read);
+
+                        bytes_processed += bytes_read;
+                    }
+
+                    if (crc != (unsigned long)stat.crc) {
+                        fprintf(stderr, "CRC mismatch for entry %s: expected %08lx, got %08lx\n", stat.name, (unsigned long)stat.crc, crc);
+                        printf("\"error\": \"CRC mismatch\", \"expected_crc\": \"%08lx\", ", (unsigned long)stat.crc);
+                    }
+
+                    printf("\"crc\": \"%08lx\", ", crc);
+
+                    unsigned char md5_digest[MD5_DIGEST_LENGTH];
+                    unsigned char sha1_digest[SHA_DIGEST_LENGTH];
+
+                    EVP_DigestFinal_ex(md5_ctx, md5_digest, NULL);
+                    EVP_DigestFinal_ex(sha1_ctx, sha1_digest, NULL);
+
+                    //EVP_MD_CTX_free(md5_ctx);
+                    EVP_MD_CTX_free(sha1_ctx);
+
+                    fprintf(stderr, "MD5: ");
+                    printf("\"md5\": \"");
+                    for (int j = 0; j < MD5_DIGEST_LENGTH; j++) {
+                        fprintf(stderr, "%02x", md5_digest[j]);
+                        printf("%02x", md5_digest[j]);
+                    }
+                    fprintf(stderr, "\n");
+                    printf("\", ");
+
+                    fprintf(stderr, "SHA1: ");
+                    printf("\"sha1\": \"");
+                    for (int j = 0; j < SHA_DIGEST_LENGTH; j++) {
+                        fprintf(stderr, "%02x", sha1_digest[j]);
+                        printf("%02x", sha1_digest[j]);
+                    }
+                    fprintf(stderr, "\n");
+                    printf("\"}]");
+
+                    zip_fclose(file);
                 }
-                printf("\n");
-
-                printf("SHA1: ");
-                for (int j = 0; j < SHA_DIGEST_LENGTH; j++) {
-                    printf("%02x", sha1_digest[j]);
+                else {
+                    perror("Failed to open entry");
+                    printf("\"error\": \"Failed to open entry\"}]");
                 }
-                printf("\n");
-
-                munmap(buffer, 0x7FFFFFFF);
-                zip_fclose(file);
-            } else {
-                perror("Failed to open entry");
             }
-        } else {
-            perror("Failed to get entry stat");
+            else {
+                perror("Failed to get entry stat");
+                printf("\"error\": \"Failed to get entry stat\"}]");
+            }
+
+            if (i < num_entries - 1) {
+                printf(", ");
+            }
         }
+
+        printf("}\n");
+
+    done_with_zip:
+        zip_close(zip);
+    done_with_buffer:
+        munmap(zip_data, zip_size);
+    done_with_file:
+        fclose(zip_file);
+    done:
+        fflush(stdout);
     }
 
-    zip_close(zip);
-    munmap(zip_data, zip_size);
-    fclose(zip_file);
+    munmap(buffer, 0x7FFFFFFF);
 
     return EXIT_SUCCESS;
 }
