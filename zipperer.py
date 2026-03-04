@@ -56,27 +56,6 @@ class zipper:
     def end_queue(self):
         self.process.stdin.write('\n')
         self.process.stdin.flush()
-    
-    def read_results(self):
-        if self.process.poll() is not None:
-            raise Exception("Zipper process has exited")
-        
-        output = []
-
-        while True:
-            ready, _, _ = select.select([self.process.stdout], [], [], 0.1)
-
-            if ready:
-                line = self.process.stdout.readline()
-
-                if not line:
-                    break
-
-                output.append(line.strip())
-            else:
-                break
-        
-        return output
 
 def main(threads, data_dir):
     workers = []
