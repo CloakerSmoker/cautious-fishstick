@@ -46,17 +46,6 @@ CREATE TABLE IF NOT EXISTS entries_errors (
 );
 ''')
 
-class zipper:
-    def __init__(self):
-        self.process = subprocess.Popen(['./zipper.elf'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    def queue(self, zip_path):
-        self.process.stdin.write(zip_path + '\n')
-        self.process.stdin.flush()
-    
-    def end_queue(self):
-        self.process.stdin.close()
-
 class zipfinder:
     def __init__(self, data_dir):
         self.data_dir = data_dir
@@ -78,24 +67,26 @@ def main(threads, data_dir):
     workers = []
 
     for i in range(threads):
-        workers.append(zipper())
+        workers.append(subprocess.Popen(['./zipper.elf'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
 
     index = 0
 
     zips = zipfinder(data_dir)
 
-    workers_stdout = [worker.process.stdout for worker in workers]
-    workers_stderr = [worker.process.stderr for worker in workers]
-    workers_stdin = [worker.process.stdin for worker in workers]
+    workers_stdout = [worker.stdout for worker in workers]
+    workers_stderr = [worker.stderr for worker in workers]
+    workers_stdin = [worker.stdin for worker in workers]
     workers_jobs_in_flight = [0] * len(workers)
     workers_done = [False] * len(workers)
     workers_lines = [''] * len(workers)
 
-    while any(worker.process.poll() is None for worker in workers):
+    out_of_jobs = False
+
+    while any(worker.poll() is None for worker in workers):
         readable_output, _, _ = select.select(workers_stdout, [], [], 0.1)
         readable_debug, _, _ = select.select(workers_stderr, [], [], 0.1)
 
-        for _ in range(30):
+        while sum(workers_jobs_in_flight) < threads * 10 and not out_of_jobs:
             for i in range(len(workers)):
                 if workers_jobs_in_flight[i] < 10 and not workers_done[i]:
                     job = zips.get_more_work()
@@ -103,6 +94,7 @@ def main(threads, data_dir):
                     if not job:
                         print(f"No more jobs to assign to worker {i}")
                         workers_done[i] = True
+                        out_of_jobs = True
                         break
 
                     if conn.execute('SELECT 1 FROM files WHERE path = ?', (job,)).fetchone():
@@ -110,7 +102,8 @@ def main(threads, data_dir):
 
                     print(f"Assigning job {job} to worker {i}")
 
-                    workers[i].queue(os.path.join(data_dir, job))
+                    workers_stdin[i].write(os.path.join(data_dir, job) + '\n')
+                    workers_stdin[i].flush()
                     workers_jobs_in_flight[i] += 1
 
         for stdout in readable_output:

@@ -12,6 +12,9 @@
 
 int main(int argc, char* argv[]) {
 
+    char* stdout_buffer = malloc(0x100000);
+    setvbuf(stdout, stdout_buffer, _IOFBF, 0x100000);
+
     unsigned char* buffer = mmap(NULL, 0x7FFFFFFF, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
     if (buffer == MAP_FAILED) {
