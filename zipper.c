@@ -166,18 +166,18 @@ int main(int argc, char* argv[]) {
                         printf("%02x", sha1_digest[j]);
                     }
                     fprintf(stderr, "\n");
-                    printf("\"}]");
+                    printf("\"}");
 
                     zip_fclose(file);
                 }
                 else {
                     perror("Failed to open entry");
-                    printf("\"error\": \"Failed to open entry\"}]");
+                    printf("\"error\": \"Failed to open entry\"}");
                 }
             }
             else {
                 perror("Failed to get entry stat");
-                printf("\"error\": \"Failed to get entry stat\"}]");
+                printf("\"error\": \"Failed to get entry stat\"}");
             }
 
             if (i < num_entries - 1) {
@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        printf("}\n");
+        printf("]}\n");
 
     done_with_zip:
         zip_close(zip);
