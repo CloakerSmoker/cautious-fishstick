@@ -4,6 +4,7 @@ import asyncio
 import os
 import select
 import sys, subprocess, sqlite3, json, glob
+import tqdm
 
 conn = sqlite3.connect('hashes.db')
 
@@ -54,8 +55,24 @@ class zipper:
         self.process.stdin.flush()
     
     def end_queue(self):
-        self.process.stdin.write('\n')
-        self.process.stdin.flush()
+        self.process.stdin.close()
+
+class zipfinder:
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+        self.directory_queue = [data_dir]
+        self.zip_queue = []
+    
+    def get_more_work(self):
+        while len(self.zip_queue) == 0 and len(self.directory_queue) > 0:
+            for entry in os.scandir(self.directory_queue.pop(0)):
+                if entry.is_dir():
+                    self.directory_queue.append(entry.path)
+                elif entry.is_file() and entry.name.lower().endswith('.zip'):
+                    self.zip_queue.append(os.path.relpath(entry.path, self.data_dir))
+
+        return self.zip_queue.pop() if len(self.zip_queue) > 0 else None
+        
 
 def main(threads, data_dir):
     workers = []
@@ -65,32 +82,50 @@ def main(threads, data_dir):
 
     index = 0
 
-    for zip_path in glob.glob('**/*.zip', root_dir=data_dir, recursive=True):
-        zip_path = os.path.join(data_dir, zip_path)
-
-        if conn.execute('SELECT 1 FROM files WHERE path = ?', (zip_path,)).fetchone():
-            continue
-
-        workers[index % threads].queue(zip_path)
-        index += 1
-    
-    for worker in workers:
-        worker.end_queue()
+    zips = zipfinder(data_dir)
 
     workers_stdout = [worker.process.stdout for worker in workers]
     workers_stderr = [worker.process.stderr for worker in workers]
+    workers_stdin = [worker.process.stdin for worker in workers]
+    workers_busy = [False] * len(workers)
 
     while any(worker.process.poll() is None for worker in workers):
-        for worker in workers:
-            readable_output, _, _ = select.select(workers_stdout, [], [], 0.1)
-            readable_debug, _, _ = select.select(workers_stderr, [], [], 0.1)
+        readable_output, _, _ = select.select(workers_stdout, [], [], 0.1)
+        readable_debug, _, _ = select.select(workers_stderr, [], [], 0.1)
 
-            for stdout in readable_output:
-                line = stdout.readline().strip()
+        for i in range(len(workers)):
+            if not workers_busy[i]:
+                job = zips.get_more_work()
+
+                print(f"Assigning job {job} to worker {i}")
+
+                if not job:
+                    workers_stdin[i].close()
+                    workers_stdin.pop(i)
+                    continue
+
+                if conn.execute('SELECT 1 FROM files WHERE path = ?', (job,)).fetchone():
+                    continue
+
+                workers[i].queue(os.path.join(data_dir, job))
+                workers_busy[i] = True
+
+        for stdout in readable_output:
+            while len(select.select([stdout], [], [], 0)[0]):
+                line = stdout.readline()#.strip()
+
+                if line == '':
+                    # EOF reached for this worker
+                    workers_stdout.remove(stdout)
+                    break
 
                 print(f"Zipper output: {line}")
 
                 if line:
+                    workers_busy[workers_stdout.index(stdout)] = False
+
+                    print(workers_busy)
+
                     try:
                         result = json.loads(line)
 
@@ -118,9 +153,15 @@ def main(threads, data_dir):
                     except json.JSONDecodeError as e:
                         print(f"Error decoding JSON from zipper output: {e}")
                         print(f"Line: {line}")
-            
-            for stderr in readable_debug:
+        
+        for stderr in readable_debug:
+            while len(select.select([stderr], [], [], 0)[0]):
                 line = stderr.readline().strip()
+
+                if line == '':
+                    # EOF reached for this worker
+                    workers_stderr.remove(stderr)
+                    break
 
                 if line:
                     print(f"Zipper debug: {line}")

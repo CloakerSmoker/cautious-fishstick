@@ -19,6 +19,18 @@ int main(int argc, char* argv[]) {
         printf("{\"error\": \"Failed to allocate buffer\"}\n");
         goto done_with_buffer;
     }
+
+    unsigned char sha256_digest[SHA256_DIGEST_LENGTH];
+    EVP_MD_CTX* sha256_ctx = EVP_MD_CTX_new();
+    const EVP_MD* sha256_type = EVP_sha256();
+
+    unsigned char md5_digest[MD5_DIGEST_LENGTH];
+    EVP_MD_CTX* md5_ctx = EVP_MD_CTX_new();
+    const EVP_MD* md5_type = EVP_md5();
+
+    unsigned char sha1_digest[SHA_DIGEST_LENGTH];
+    EVP_MD_CTX* sha1_ctx = EVP_MD_CTX_new();
+    const EVP_MD* sha1_type = EVP_sha1();
     
     while (1) {
         if (feof(stdin)) {
@@ -63,13 +75,9 @@ int main(int argc, char* argv[]) {
             goto done_with_file;
         }
 
-        unsigned char sha256_digest[SHA256_DIGEST_LENGTH];
-        EVP_MD_CTX* sha256_ctx = EVP_MD_CTX_new();
-        const EVP_MD* sha256_type = EVP_sha256();
         EVP_DigestInit_ex(sha256_ctx, sha256_type, NULL);
         EVP_DigestUpdate(sha256_ctx, zip_data, zip_size);
         EVP_DigestFinal_ex(sha256_ctx, sha256_digest, NULL);
-        EVP_MD_CTX_free(sha256_ctx);
 
         struct zip_source* source = zip_source_buffer_create(zip_data, zip_size, 0, NULL);
         struct zip* zip = zip_open_from_source(source, ZIP_RDONLY, NULL);
@@ -100,21 +108,13 @@ int main(int argc, char* argv[]) {
 
                 printf("\"name\": \"%s\", \"size\": %lld, ", stat.name, stat.size);
 
-                unsigned char md5_digest[MD5_DIGEST_LENGTH];
-                unsigned char sha1_digest[SHA_DIGEST_LENGTH];
-
                 struct zip_file* file = zip_fopen_index(zip, i, 0);
 
                 if (file) {
                     zip_uint64_t bytes_processed = 0;
                     unsigned int crc = 0;
 
-                    EVP_MD_CTX* md5_ctx = EVP_MD_CTX_new();
-                    const EVP_MD* md5_type = EVP_md5();
                     EVP_DigestInit_ex(md5_ctx, md5_type, NULL);
-
-                    EVP_MD_CTX* sha1_ctx = EVP_MD_CTX_new();
-                    const EVP_MD* sha1_type = EVP_sha1();
                     EVP_DigestInit_ex(sha1_ctx, sha1_type, NULL);
 
                     while (bytes_processed < stat.size) {
@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
                         }
 
                         crc = crc32(crc, (const unsigned char*)buffer, (uInt)bytes_read);
-                        //EVP_DigestUpdate(md5_ctx, buffer, bytes_read);
+                        EVP_DigestUpdate(md5_ctx, buffer, bytes_read);
                         EVP_DigestUpdate(sha1_ctx, buffer, bytes_read);
 
                         bytes_processed += bytes_read;
@@ -147,14 +147,8 @@ int main(int argc, char* argv[]) {
 
                     printf("\"crc\": \"%08lx\", ", crc);
 
-                    unsigned char md5_digest[MD5_DIGEST_LENGTH];
-                    unsigned char sha1_digest[SHA_DIGEST_LENGTH];
-
                     EVP_DigestFinal_ex(md5_ctx, md5_digest, NULL);
                     EVP_DigestFinal_ex(sha1_ctx, sha1_digest, NULL);
-
-                    //EVP_MD_CTX_free(md5_ctx);
-                    EVP_MD_CTX_free(sha1_ctx);
 
                     fprintf(stderr, "MD5: ");
                     printf("\"md5\": \"");
@@ -202,6 +196,10 @@ int main(int argc, char* argv[]) {
     done:
         fflush(stdout);
     }
+
+    EVP_MD_CTX_free(sha256_ctx);
+    EVP_MD_CTX_free(md5_ctx);
+    EVP_MD_CTX_free(sha1_ctx);
 
     munmap(buffer, 0x7FFFFFFF);
 
