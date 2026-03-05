@@ -89,21 +89,21 @@ def main(threads, data_dir):
     workers_stdin = [worker.process.stdin for worker in workers]
     workers_jobs_in_flight = [0] * len(workers)
     workers_done = [False] * len(workers)
+    workers_lines = [''] * len(workers)
 
     while any(worker.process.poll() is None for worker in workers):
         readable_output, _, _ = select.select(workers_stdout, [], [], 0.1)
         readable_debug, _, _ = select.select(workers_stderr, [], [], 0.1)
 
-        for i in range(len(workers)):
-            if workers_jobs_in_flight[i] < 10 and not workers_done[i]:
-                for _ in range(30):
+        for _ in range(30):
+            for i in range(len(workers)):
+                if workers_jobs_in_flight[i] < 10 and not workers_done[i]:
                     job = zips.get_more_work()
 
                     if not job:
-                        print(f"No more jobs to assign to worker {i}, closing stdin")
-                        workers_stdin[i].close()
+                        print(f"No more jobs to assign to worker {i}")
                         workers_done[i] = True
-                        continue
+                        break
 
                     if conn.execute('SELECT 1 FROM files WHERE path = ?', (job,)).fetchone():
                         continue
@@ -115,18 +115,22 @@ def main(threads, data_dir):
 
         for stdout in readable_output:
             while len(select.select([stdout], [], [], 0)[0]):
-                line = stdout.readline()#.strip()
+                worker_index = workers_stdout.index(stdout)
+
+                line = stdout.readline().strip()
 
                 if line == '':
                     # EOF reached for this worker
-                    workers_stdout.remove(stdout)
                     break
 
                 #print(f"Zipper output: {line}")
 
                 if line:
-                    worker_index = workers_stdout.index(stdout)
                     workers_jobs_in_flight[worker_index] -= 1
+
+                    if workers_jobs_in_flight[worker_index] == 0 and workers_done[worker_index]:
+                        print(f"Worker {worker_index} has completed all jobs")
+                        workers_stdin[worker_index].close()
 
                     print(workers_jobs_in_flight)
 
