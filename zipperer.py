@@ -77,7 +77,6 @@ def main(threads, data_dir):
     workers_stderr = [worker.stderr for worker in workers]
     workers_stdin = [worker.stdin for worker in workers]
     workers_jobs_in_flight = [0] * len(workers)
-    workers_done = [False] * len(workers)
     workers_lines = [''] * len(workers)
 
     out_of_jobs = False
@@ -88,12 +87,11 @@ def main(threads, data_dir):
 
         while sum(workers_jobs_in_flight) < threads * 10 and not out_of_jobs:
             for i in range(len(workers)):
-                if workers_jobs_in_flight[i] < 10 and not workers_done[i]:
+                if workers_jobs_in_flight[i] < 10:
                     job = zips.get_more_work()
 
                     if not job:
                         print(f"No more jobs to assign to worker {i}")
-                        workers_done[i] = True
                         out_of_jobs = True
                         break
 
@@ -121,7 +119,7 @@ def main(threads, data_dir):
                 if line:
                     workers_jobs_in_flight[worker_index] -= 1
 
-                    if workers_jobs_in_flight[worker_index] == 0 and workers_done[worker_index]:
+                    if workers_jobs_in_flight[worker_index] == 0 and out_of_jobs:
                         print(f"Worker {worker_index} has completed all jobs")
                         workers_stdin[worker_index].close()
 
