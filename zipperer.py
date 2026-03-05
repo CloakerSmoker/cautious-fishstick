@@ -88,24 +88,27 @@ def main(threads, data_dir):
     workers_stderr = [worker.process.stderr for worker in workers]
     workers_stdin = [worker.process.stdin for worker in workers]
     workers_busy = [False] * len(workers)
+    workers_done = [False] * len(workers)
 
     while any(worker.process.poll() is None for worker in workers):
         readable_output, _, _ = select.select(workers_stdout, [], [], 0.1)
         readable_debug, _, _ = select.select(workers_stderr, [], [], 0.1)
 
         for i in range(len(workers)):
-            if not workers_busy[i]:
+            if not workers_busy[i] and not workers_done[i]:
                 job = zips.get_more_work()
 
-                print(f"Assigning job {job} to worker {i}")
-
                 if not job:
+                    print(f"No more jobs to assign to worker {i}, closing stdin")
+
                     workers_stdin[i].close()
-                    workers_stdin.pop(i)
+                    workers_done[i] = True
                     continue
 
                 if conn.execute('SELECT 1 FROM files WHERE path = ?', (job,)).fetchone():
                     continue
+
+                print(f"Assigning job {job} to worker {i}")
 
                 workers[i].queue(os.path.join(data_dir, job))
                 workers_busy[i] = True
@@ -119,14 +122,16 @@ def main(threads, data_dir):
                     workers_stdout.remove(stdout)
                     break
 
-                print(f"Zipper output: {line}")
+                #print(f"Zipper output: {line}")
 
                 if line:
                     workers_busy[workers_stdout.index(stdout)] = False
 
-                    print(workers_busy)
+                    #print(workers_busy)
 
                     try:
+                        print(f"{workers_stdout.index(stdout)}: {line}")
+
                         result = json.loads(line)
 
                         result['path'] = os.path.relpath(result['path'], data_dir)
@@ -164,7 +169,8 @@ def main(threads, data_dir):
                     break
 
                 if line:
-                    print(f"Zipper debug: {line}")
+                    #print(f"Zipper debug: {line}")
+                    pass
 
         conn.commit()
 
