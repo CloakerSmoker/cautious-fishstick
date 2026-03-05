@@ -156,7 +156,7 @@ def main(threads, data_dir):
                                 conn.execute('''
                                     INSERT OR REPLACE INTO entries (zip_id, name, size, crc, md5, sha1)
                                     VALUES (?, ?, ?, ?, ?, ?)
-                                ''', (zip_id, entry['name'], entry['size'], entry['crc'], entry['md5'], entry['sha1']))
+                                ''', (zip_id, entry['name'], entry['size'], entry['crc'], '', entry['sha1']))
 
                     except json.JSONDecodeError as e:
                         print(f"Error decoding JSON from zipper output: {e}")

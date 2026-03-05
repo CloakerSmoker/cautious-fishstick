@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
                         }
 
                         crc = crc32(crc, (const unsigned char*)buffer, (uInt)bytes_read);
-                        EVP_DigestUpdate(md5_ctx, buffer, bytes_read);
+                        //EVP_DigestUpdate(md5_ctx, buffer, bytes_read);
                         EVP_DigestUpdate(sha1_ctx, buffer, bytes_read);
 
                         bytes_processed += bytes_read;
@@ -147,17 +147,17 @@ int main(int argc, char* argv[]) {
 
                     printf("\"crc\": \"%08lx\", ", crc);
 
-                    EVP_DigestFinal_ex(md5_ctx, md5_digest, NULL);
+                    //EVP_DigestFinal_ex(md5_ctx, md5_digest, NULL);
                     EVP_DigestFinal_ex(sha1_ctx, sha1_digest, NULL);
 
-                    fprintf(stderr, "MD5: ");
+                    /* fprintf(stderr, "MD5: ");
                     printf("\"md5\": \"");
                     for (int j = 0; j < MD5_DIGEST_LENGTH; j++) {
                         fprintf(stderr, "%02x", md5_digest[j]);
                         printf("%02x", md5_digest[j]);
                     }
                     fprintf(stderr, "\n");
-                    printf("\", ");
+                    printf("\", "); */
 
                     fprintf(stderr, "SHA1: ");
                     printf("\"sha1\": \"");
